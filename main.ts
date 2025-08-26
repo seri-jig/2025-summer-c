@@ -42,45 +42,65 @@ Deno.serve(async (req) => {
 		});
 	}
 
-	// .tsをバンドルしてjsに変換するブロック
+	// TypeScript ファイル処理
 	if (pathname.endsWith('.ts')) {
-		const tsPath = join(publicRoot, pathname);
-		try {
-			const result = await esbuild.build({
-				entryPoints: [tsPath],
-				plugins: [denoPlugin()],
-				bundle: true,
-				write: false,
-				format: 'esm',
-			});
+		const env = Deno.env.get('DENO_ENV') || 'development';
+		
+		if (env === 'production') {
+			// プロダクション環境：事前ビルド済みJSファイルを配信
+			const jsPath = pathname.replace('.ts', '.js');
+			const jsFilePath = join(publicRoot, jsPath);
+			
+			try {
+				const jsContent = await Deno.readTextFile(jsFilePath);
+				return new Response(jsContent, {
+					headers: {
+						'Content-Type': 'application/javascript; charset=utf-8',
+						'Cache-Control': 'public, max-age=31536000, immutable',
+					},
+				});
+			} catch (error) {
+				console.error(`Pre-built JS file not found: ${jsFilePath}`);
+				return new Response(`Pre-built JavaScript file not found: ${jsPath}. Run 'deno task build:all' to generate bundle files.`, {
+					status: 404,
+				});
+			}
+		} else {
+			// 開発環境：動的バンドル
+			const tsPath = join(publicRoot, pathname);
+			try {
+				const result = await esbuild.build({
+					entryPoints: [tsPath],
+					plugins: [denoPlugin()],
+					bundle: true,
+					write: false,
+					format: 'esm',
+				});
 
-			const code = result.outputFiles[0].text;
+				const code = result.outputFiles[0].text;
 
-			// 環境に応じてキャッシュの有効期限を設定する
-			const env = Deno.env.get('DENO_ENV') || 'development';
-			const cacheControl = env === 'production'
-				? 'public, max-age=31536000, immutable'
-				: 'no-cache, no-store, must-revalidate';
-
-			return new Response(code, {
-				headers: {
-					'Content-Type': 'application/javascript; charset=utf-8',
-					'Cache-Control': cacheControl,
-				},
-			});
-		} catch (error) {
-			const errorMessage = error && error instanceof Error
-				? error.message
-				: String(error);
-			console.error('esbuild build error:', error);
-			return new Response(`TypeScript bundling error: ${errorMessage}`, {
-				status: 500,
-			});
+				return new Response(code, {
+					headers: {
+						'Content-Type': 'application/javascript; charset=utf-8',
+						'Cache-Control': 'no-cache, no-store, must-revalidate',
+					},
+				});
+			} catch (error) {
+				const errorMessage = error && error instanceof Error
+					? error.message
+					: String(error);
+				console.error('esbuild build error:', error);
+				return new Response(`TypeScript bundling error: ${errorMessage}`, {
+					status: 500,
+				});
+			}
 		}
 	}
 
-    // バックエンド処理
-    if(req.method === "GET" || req.method === "POST"){
+    // 特定のAPIエンドポイントのみバックエンド処理
+    if (pathname === '/welcome-message' || 
+        pathname === '/post-json' || 
+        pathname === '/query-json') {
         return await query(kv, req);
     }
     
